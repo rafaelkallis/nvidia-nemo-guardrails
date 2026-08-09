@@ -1,0 +1,34 @@
+# syntax=docker/dockerfile:1
+
+# Overlay image for the self-hosted NeMo Guardrails deployment.
+#
+# Base image is built from the upstream NeMo Guardrails Dockerfile at a pinned
+# tag (see scripts/build-local.sh and .github/workflows/build.yml). This stage
+# swaps in our guardrail configuration and serves it on port 7331.
+#
+# Build order:
+#   1. scripts/build-local.sh (or the CI workflow) builds the upstream repo as
+#      `nemoguardrails:base`.
+#   2. This overlay is built with `--build-arg NEMOGUARDRAILS_IMAGE=nemoguardrails:base`.
+
+ARG NEMOGUARDRAILS_IMAGE=nemoguardrails:base
+FROM ${NEMOGUARDRAILS_IMAGE}
+
+# Our guardrail configuration lives at /config (overrides the upstream example
+# bots directory that was copied there by the base image).
+COPY config/ /config/
+
+# Healthcheck. The base image exposes /v1/health and /healthz.
+ENV NEMO_GUARDRAILS_HEALTHCHECK_URL=http://localhost:7331/v1/health
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD python -c "import os, urllib.request, sys; opener = urllib.request.build_opener(urllib.request.ProxyHandler({})); sys.exit(0 if opener.open(os.environ['NEMO_GUARDRAILS_HEALTHCHECK_URL']).status == 200 else 1)"
+
+# NeMo Guardrails collects anonymous telemetry. Self-hosted deployments that
+# want full privacy can disable it; uncomment to opt out.
+# ENV NEMO_GUARDRAILS_NO_USAGE_STATS=1
+
+EXPOSE 7331
+
+# The upstream ENTRYPOINT runs `nemoguardrails`; default CMD starts the server.
+# We serve our config on the standard guardrail port.
+CMD ["server", "--verbose", "--config=/config", "--port=7331"]

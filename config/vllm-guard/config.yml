@@ -1,0 +1,52 @@
+# ---------------------------------------------------------------------------
+# Configuration for the core self-hosted guardrail deployment.
+#
+# All three model roles (main generation, self-check input, self-check output)
+# point at the SAME self-hosted vLLM instance. This is the "same-model-as-judge"
+# posture: no second LLM is hosted. The judge shares the generator's
+# vulnerabilities (see README "Security posture" for the trade-off and the
+# planned independent-classifier upgrade path).
+#
+# Adjust `model` and `base_url` for your actual vLLM deployment.
+# ---------------------------------------------------------------------------
+
+models:
+  - type: main
+    engine: openai
+    model: deepseek-v3               # <-- your vLLM served model name
+    parameters:
+      base_url: "http://vllm:8000/v1"   # OpenAI-compatible endpoint
+      api_key: EMPTY                    # placeholder; vLLM typically unauthenticated
+
+  - type: self_check_input
+    engine: openai
+    model: deepseek-v3               # same LLM used as the judge
+    parameters:
+      base_url: "http://vllm:8000/v1"
+      api_key: EMPTY
+
+  - type: self_check_output
+    engine: openai
+    model: deepseek-v3               # same LLM used as the judge
+    parameters:
+      base_url: "http://vllm:8000/v1"
+      api_key: EMPTY
+
+rails:
+  input:
+    flows:
+      - self check input
+
+  output:
+    flows:
+      - self check output
+    streaming:
+      enabled: true
+      chunk_size: 200     # token block size evaluated by the output rail
+      context_size: 50    # tokens of look-back context kept for evaluation
+      stream_first: true # stream tokens immediately; offending chunks dropped after release
+
+# Refusal / fallback dialog behaviour (Colang).
+# `bot refuse to respond` ships with the library; rails.co (auto-discovered
+# by the server) provides the canonical refusal wording so blocked requests
+# return a controlled, polite refusal.

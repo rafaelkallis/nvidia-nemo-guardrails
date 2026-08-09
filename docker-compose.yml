@@ -1,0 +1,58 @@
+# Local development stack for the self-hosted guardrail deployment.
+#
+# Two profiles:
+#   * default: runs ONLY the guardrails overlay, expecting a vLLM server to be
+#     reachable at the base_url baked into config/vllm-guard/config.yml
+#     (default http://vllm:8000/v1 -> use the `full` profile below).
+#   * full: also runs a vLLM service (adjust image/model/args for your model)
+#     on the same network so the guardrails config can reach it at vllm:8000.
+#
+# Usage:
+#   docker compose up --build guardrails          # overlay only
+#   NEMO_HOST_PORT=7331 docker compose up --build # full stack
+#
+# Clients should call the guardrails server (port 7331) instead of vLLM
+# directly. vLLM port 8000 is published only for debugging/benchmarking.
+
+name: nemo-guardrails-vllm
+
+services:
+  vllm:
+    image: vllm/vllm-openai:latest
+    profiles: ["full"]
+    command: >
+      --model ${VLLM_MODEL:-deepseek-ai/DeepSeek-V3}
+      --served-model-name ${VLLM_MODEL_NAME:-deepseek-v3}
+      --port 8000
+      --max-model-len 8192
+    shm_size: 16gb
+    ports:
+      - "8000:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  guardrails:
+    build:
+      context: .
+      dockerfile: Dockerfile.overlay
+      args:
+        NEMOGUARDRAILS_IMAGE: nemoguardrails:base
+    image: ghcr.io/rafaelkallis/nvidia-nemo-guardrails:dev
+    depends_on:
+      - vllm
+    environment:
+      # Match the API key placeholder set in config.yml (EMPTY).
+      - OPENAI_API_KEY=EMPTY
+    ports:
+      - "${NEMO_HOST_PORT:-7331}:7331"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7331/v1/health').status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s

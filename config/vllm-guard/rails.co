@@ -1,0 +1,9 @@
+# Colang definitions for the guardrail configuration.
+#
+# `define bot refuse to respond` provides the canonical refusal message used by
+# the built-in `self check input` and `self check output` flows when a block
+# occurs. Keeping it here (instead of relying only on the library default)
+# makes the refusal wording explicit and easy to adjust for this deployment.
+
+define bot refuse to respond
+  "I'm sorry, I can't respond to that."

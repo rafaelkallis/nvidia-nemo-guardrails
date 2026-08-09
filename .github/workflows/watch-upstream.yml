@@ -1,0 +1,109 @@
+name: watch-upstream
+
+# Watches NVIDIA-NeMo/Guardrails for new releases and triggers a rebuild of the
+# overlay image for each one. GitHub does not expose another repo's release
+# events, so this runs on a schedule and compares the latest upstream release
+# against the GHCR tags we have already built.
+#
+# Whenever a NEW upstream version appears, a unique `upstream-<version>`
+# image tag is produced, and `latest` is re-pointed at it. Re-dispatches of the
+# same version are no-ops because watch-upstream skips versions whose image tag
+# already exists in GHCR.
+
+on:
+  # Default: every 6 hours. Adjust the cron expression below to taste.
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+env:
+  UPSTREAM_REPO: NVIDIA-NeMo/Guardrails
+  GCR_IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout our repo
+        uses: actions/checkout@v4
+
+      # Resolve latest upstream release. We need the PAT because unauthenticated
+      # GitHub API calls to a public repo are throttled for Actions runners'
+      # shared IPs (60 req/hr is easily exhausted).
+      - name: Get latest upstream release
+        id: latest
+        run: |
+          AUTH=""
+          if [[ -n "${{ secrets.UPSTREAM_RELEASES_TOKEN }}" ]]; then
+            AUTH="-H Authorization: token ${{ secrets.UPSTREAM_RELEASES_TOKEN }}"
+          fi
+          TAG="$(
+            curl -sfL $AUTH \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${UPSTREAM_REPO}/releases/latest" \
+              | jq -r '.tag_name'
+          )"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Latest upstream release: $TAG"
+
+      - name: Check if image tag already exists
+        id: exists
+        env:
+          TAG: ${{ steps.latest.outputs.tag }}
+        run: |
+          TOKEN="${{ secrets.GITHUB_TOKEN }}"
+          IMAGE_TAG="upstream-${TAG}"
+          STATUS="$(
+            curl -sfL -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer ${TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/users/${GITHUB_REPOSITORY_OWNER}/packages/container/package/%2Fnvidia-nemo-guardrails/versions"
+          )"
+          echo "GHCR versions query status: $STATUS"
+          # Decide: if a version listed matches our image_tag, skip.
+          if [[ "$STATUS" == "200" ]]; then
+            TAGS="$(
+              curl -sfL \
+                -H "Authorization: Bearer ${TOKEN}" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/users/${GITHUB_REPOSITORY_OWNER}/packages/container/package/%2Fnvidia-nemo-guardrails/versions"
+            )"
+            if echo "$TAGS" | jq -e --arg t "$IMAGE_TAG" \
+              '.[] | .metadata.container.tags[]? | select(. == $t)' >/dev/null 2>&1; then
+              echo "exists=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "exists=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            # If the package query fails (e.g. no package yet), default to build.
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Dispatch build for new upstream release
+        if: steps.exists.outputs.exists == 'false' && steps.latest.outputs.tag != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = '${{ steps.latest.outputs.tag }}';
+            try {
+              await github.rest.actions.createWorkflowDispatch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: 'build.yml',
+                ref: context.ref || 'main',
+                inputs: { upstream_tag: tag },
+              });
+              console.log(`Dispatched build for upstream ${tag}`);
+            } catch (e) {
+              // ignore 'already exists' style errors; the watcher retries later
+              console.log(`Dispatch skipped (already running or error): ${e.message}`);
+              core.setFailed(`Failed to dispatch build for ${tag}: ${e.message}`);
+            }
+
+      - name: Summary
+        run: |
+          echo "Checked upstream: ${{ steps.latest.outputs.tag }}"
+          echo "Already built:   ${{ steps.exists.outputs.exists }}"

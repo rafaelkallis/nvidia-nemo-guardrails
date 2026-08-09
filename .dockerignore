@@ -1,0 +1,10 @@
+.git
+.github
+ci
+scripts
+*.md
+.env
+.env.*
+**/__pycache__
+**/*.pyc
+**/.DS_Store
