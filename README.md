@@ -109,7 +109,7 @@ The server listens on `http://localhost:7331`. Endpoint summary:
 | `GET /v1/models` | Models served. |
 | `GET /v1/rails/configs` | Available guardrail config ids. |
 | `GET /v1/checks` | Single-pass input guardrail check. |
-| `GET /v1/health`, `GET /healthz` | Health checks. |
+| `GET /` | Health / liveness check (returns `{"status": "ok"}`). |
 
 ### 4. Call it
 

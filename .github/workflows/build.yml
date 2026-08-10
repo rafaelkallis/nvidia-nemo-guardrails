@@ -62,11 +62,11 @@ jobs:
       IS_UPSTREAM_DISPATCH: ${{ inputs.upstream_tag != '' }}
     steps:
       - name: Checkout our repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # Build the BASE image from the upstream repo at the resolved tag.
       - name: Checkout upstream NeMo Guardrails
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: NVIDIA-NeMo/Guardrails
           ref: ${{ env.UPSTREAM_TAG }}
@@ -89,7 +89,7 @@ jobs:
             .
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -128,7 +128,7 @@ jobs:
       GCR_IMAGE: ghcr.io/${{ github.repository }}
     steps:
       - name: Checkout our repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Pull built image
         run: docker pull "$GCR_IMAGE:${{ needs.build.outputs.tag }}"
@@ -182,7 +182,7 @@ jobs:
       - name: Wait for guardrails to be ready
         run: |
           for i in $(seq 1 90); do
-            if curl -sf http://localhost:7331/v1/health >/dev/null 2>&1; then
+            if curl -sf http://localhost:7331/ >/dev/null 2>&1; then
               echo "guardrails ready"; exit 0
             fi
             sleep 2

@@ -51,7 +51,8 @@ services:
     ports:
       - "${NEMO_HOST_PORT:-7331}:7331"
     healthcheck:
-      test: ["CMD", "python", "-c", "import os, urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7331/v1/health').status == 200 else 1)"]
+      # v0.23.0 has no /v1/health; the root endpoint returns {"status": "ok"}.
+      test: ["CMD", "python", "-c", "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7331/').status == 200 else 1)"]
       interval: 30s
       timeout: 5s
       retries: 3
