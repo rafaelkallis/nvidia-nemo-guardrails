@@ -26,6 +26,10 @@ jobs:
       # `packages: read` lets GITHUB_TOKEN log in to GHCR and inspect whether
       # the `:v<version>` image already exists.
       packages: read
+      # `actions: write` is required to dispatch build.yml via workflow_dispatch
+      # from this scheduled workflow (GITHUB_TOKEN otherwise lacks the action
+      # "Resource not accessible by integration").
+      actions: write
     outputs:
       new_tag: ${{ steps.newest-tag.outputs.tag }}
     steps:
