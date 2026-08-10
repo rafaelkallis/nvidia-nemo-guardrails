@@ -25,7 +25,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
+      # `packages: read` lets GITHUB_TOKEN log in to GHCR and inspect whether
+      # the upstream-<version> image already exists.
+      packages: read
     steps:
       - name: Checkout our repo
         uses: actions/checkout@v4
@@ -49,36 +51,27 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "Latest upstream release: $TAG"
 
+      # Check whether our GHCR image is already tagged upstream-<version>.
+      # Uses `docker manifest inspect` against the OCI registry directly — avoids
+      # the GitHub packages REST API (404 on first run / no package yet, and
+      # rate limits). Needs `packages: read` (GITHUB_TOKEN) to read GHCR.
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Check if image tag already exists
         id: exists
         env:
           TAG: ${{ steps.latest.outputs.tag }}
         run: |
-          TOKEN="${{ secrets.GITHUB_TOKEN }}"
           IMAGE_TAG="upstream-${TAG}"
-          STATUS="$(
-            curl -sfL -o /dev/null -w '%{http_code}' \
-              -H "Authorization: Bearer ${TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/users/${GITHUB_REPOSITORY_OWNER}/packages/container/package/%2Fnvidia-nemo-guardrails/versions"
-          )"
-          echo "GHCR versions query status: $STATUS"
-          # Decide: if a version listed matches our image_tag, skip.
-          if [[ "$STATUS" == "200" ]]; then
-            TAGS="$(
-              curl -sfL \
-                -H "Authorization: Bearer ${TOKEN}" \
-                -H "Accept: application/vnd.github+json" \
-                "https://api.github.com/users/${GITHUB_REPOSITORY_OWNER}/packages/container/package/%2Fnvidia-nemo-guardrails/versions"
-            )"
-            if echo "$TAGS" | jq -e --arg t "$IMAGE_TAG" \
-              '.[] | .metadata.container.tags[]? | select(. == $t)' >/dev/null 2>&1; then
-              echo "exists=true" >> "$GITHUB_OUTPUT"
-            else
-              echo "exists=false" >> "$GITHUB_OUTPUT"
-            fi
+          echo "Checking $GCR_IMAGE:$IMAGE_TAG"
+          if docker manifest inspect "$GCR_IMAGE:$IMAGE_TAG" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
           else
-            # If the package query fails (e.g. no package yet), default to build.
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
