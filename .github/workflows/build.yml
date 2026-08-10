@@ -6,14 +6,14 @@ name: build-and-release
 # Triggers:
 #   * main branch pushes          -> `edge-<sha>` tag (no `latest`)
 #   * version tags (v1.2.3)       -> build + smoke test + release push (tag + latest)
-#   * workflow_dispatch           -> build from `upstream_tag` -> `upstream-<tag>` + latest
-#     This is auto-dispatched by watch-upstream.yml whenever
-#     NVIDIA-NeMo/Guardrails publishes a new release.
+#   * workflow_dispatch           -> build from `upstream_tag` -> `:v<version>` + latest
+#     This is auto-dispatched by watch-upstream.yml whenever NVIDIA-NeMo/Guardrails
+#     publishes a new STABLE git tag.
 #
-# Tag semantics:
-#   upstream release   -> upstream-<version> (e.g. upstream-v0.24.0) + latest
-#   our v* tag         -> the tag itself + latest
-#   main push          -> edge-<sha>
+# Tag semantics (exact upstream tag, NO upstream- prefix):
+#   upstream tag (v0.23.0)   -> :v0.23.0 + latest
+#   our v* tag (v1.2.3)      -> :v1.2.3 + latest
+#   main push                -> :edge-<sha>
 
 on:
   push:
@@ -96,16 +96,16 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Tag semantics:
-      #   upstream release   -> upstream-<version> (e.g. upstream-v0.24.0)
-      #   our v* tag         -> the tag itself
-      #   main push          -> edge-<sha>
+      #   our v* tag               -> GITHUB_REF_NAME (e.g. v1.2.3)
+      #   upstream dispatch (tag)  -> UPSTREAM_TAG (e.g. v0.23.0)
+      #   main push                -> edge-<sha>
       - name: Compute image tag
         id: meta
         run: |
-          if [[ "$IS_UPSTREAM_DISPATCH" == "true" ]]; then
-            echo "tag=upstream-${UPSTREAM_TAG}" >> "$GITHUB_OUTPUT"
-          elif [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
             echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          elif [[ "$IS_UPSTREAM_DISPATCH" == "true" ]]; then
+            echo "tag=${UPSTREAM_TAG}" >> "$GITHUB_OUTPUT"
           else
             echo "tag=edge-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
           fi
@@ -114,9 +114,9 @@ jobs:
         run: |
           docker tag "$GCR_IMAGE:build" "$GCR_IMAGE:${{ steps.meta.outputs.tag }}"
           docker push "$GCR_IMAGE:${{ steps.meta.outputs.tag }}"
-          # Keep `latest` pointing at the newest release-quality build
-          # (upstream release or our release tag), not unstable edge builds.
-          if [[ "$IS_UPSTREAM_DISPATCH" == "true" || "$GITHUB_REF_TYPE" == "tag" ]]; then
+          # `latest` always points at the newest release-quality build: a stable
+          # upstream tag or our release tag. Never an edge build.
+          if [[ "$GITHUB_REF_TYPE" == "tag" || "$IS_UPSTREAM_DISPATCH" == "true" ]]; then
             docker tag "$GCR_IMAGE:build" "$GCR_IMAGE:latest"
             docker push "$GCR_IMAGE:latest"
           fi

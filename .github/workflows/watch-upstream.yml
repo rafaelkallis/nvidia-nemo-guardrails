@@ -1,14 +1,12 @@
 name: watch-upstream
 
-# Watches NVIDIA-NeMo/Guardrails for new releases and triggers a rebuild of the
-# overlay image for each one. GitHub does not expose another repo's release
-# events, so this runs on a schedule and compares the latest upstream release
-# against the GHCR tags we have already built.
+# Watches NVIDIA-NeMo/Guardrails STABLE git tags (vX.Y.Z, e.g. v0.23.0) and
+# triggers a rebuild of the overlay image to the matching Docker tag.
 #
-# Whenever a NEW upstream version appears, a unique `upstream-<version>`
-# image tag is produced, and `latest` is re-pointed at it. Re-dispatches of the
-# same version are no-ops because watch-upstream skips versions whose image tag
-# already exists in GHCR.
+# GitHub does not expose another repo's tag/release events, so this runs on a
+# schedule. It lists upstream tags, and dispatches build.yml for any STABLE
+# tag whose image is not yet present in GHCR as the exact `:v<version>` tag.
+# `latest` is re-pointed by the build whenever a new stable tag is built.
 
 on:
   # Default: every 6 hours. Adjust the cron expression below to taste.
@@ -26,35 +24,37 @@ jobs:
     permissions:
       contents: read
       # `packages: read` lets GITHUB_TOKEN log in to GHCR and inspect whether
-      # the upstream-<version> image already exists.
+      # the `:v<version>` image already exists.
       packages: read
+    outputs:
+      new_tag: ${{ steps.newest-tag.outputs.tag }}
     steps:
       - name: Checkout our repo
         uses: actions/checkout@v6
 
-      # Resolve latest upstream release. We need the PAT because unauthenticated
-      # GitHub API calls to a public repo are throttled for Actions runners'
-      # shared IPs (60 req/hr is easily exhausted).
-      - name: Get latest upstream release
-        id: latest
+      # Resolve the newest STABLE upstream git tag (strict vX.Y.Z, no -rc*).
+      # Requires a PAT to avoid anonymous API rate limits on the runner.
+      - name: Get newest stable upstream tag
+        id: newest-tag
         run: |
           AUTH=""
           if [[ -n "${{ secrets.UPSTREAM_RELEASES_TOKEN }}" ]]; then
             AUTH="-H Authorization: token ${{ secrets.UPSTREAM_RELEASES_TOKEN }}"
           fi
-          TAG="$(
-            curl -sfL $AUTH \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/${UPSTREAM_REPO}/releases/latest" \
-              | jq -r '.tag_name'
-          )"
+          TAG="$(curl -sfL $AUTH \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${UPSTREAM_REPO}/tags?per_page=100" \
+            | jq -r '[.[].name | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))] | first')"
+          if [[ -z "$TAG" || "$TAG" == "null" ]]; then
+            echo "No stable upstream tag found"
+            exit 0
+          fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "Latest upstream release: $TAG"
+          echo "Newest stable upstream tag: $TAG"
 
-      # Check whether our GHCR image is already tagged upstream-<version>.
-      # Uses `docker manifest inspect` against the OCI registry directly — avoids
-      # the GitHub packages REST API (404 on first run / no package yet, and
-      # rate limits). Needs `packages: read` (GITHUB_TOKEN) to read GHCR.
+      # Check whether our GHCR image is already tagged :VERSION (exact tag,
+      # no upstream- prefix). Uses docker manifest inspect against the OCI
+      # registry directly (no packages REST API / rate-limit issues).
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
@@ -65,22 +65,21 @@ jobs:
       - name: Check if image tag already exists
         id: exists
         env:
-          TAG: ${{ steps.latest.outputs.tag }}
+          TAG: ${{ steps.newest-tag.outputs.tag }}
         run: |
-          IMAGE_TAG="upstream-${TAG}"
-          echo "Checking $GCR_IMAGE:$IMAGE_TAG"
-          if docker manifest inspect "$GCR_IMAGE:$IMAGE_TAG" >/dev/null 2>&1; then
+          echo "Checking $GCR_IMAGE:$TAG"
+          if docker manifest inspect "$GCR_IMAGE:$TAG" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Dispatch build for new upstream release
-        if: steps.exists.outputs.exists == 'false' && steps.latest.outputs.tag != ''
+      - name: Dispatch build for new stable upstream tag
+        if: steps.exists.outputs.exists == 'false' && steps.newest-tag.outputs.tag != ''
         uses: actions/github-script@v8
         with:
           script: |
-            const tag = '${{ steps.latest.outputs.tag }}';
+            const tag = '${{ steps.newest-tag.outputs.tag }}';
             try {
               await github.rest.actions.createWorkflowDispatch({
                 owner: context.repo.owner,
@@ -91,12 +90,11 @@ jobs:
               });
               console.log(`Dispatched build for upstream ${tag}`);
             } catch (e) {
-              // ignore 'already exists' style errors; the watcher retries later
               console.log(`Dispatch skipped (already running or error): ${e.message}`);
               core.setFailed(`Failed to dispatch build for ${tag}: ${e.message}`);
             }
 
       - name: Summary
         run: |
-          echo "Checked upstream: ${{ steps.latest.outputs.tag }}"
+          echo "Checked upstream: ${{ steps.newest-tag.outputs.tag }}"
           echo "Already built:   ${{ steps.exists.outputs.exists }}"

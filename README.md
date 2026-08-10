@@ -147,17 +147,22 @@ configs by adding subfolders; discover them via `GET /v1/rails/configs`.
 
 | Trigger | Behavior |
 |---|---|
-| `main` push | Build base (upstream @ pinned tag) + overlay → smoke test → push `edge-<sha>`. |
-| our `v*` tag | Build + smoke test → push the version tag (e.g. `v1.0.0`) + `latest`. |
-| upstream release | `watch-upstream.yml` detects it and dispatches a build → push `upstream-<version>` (e.g. `upstream-v0.24.0`) + `latest`. |
+| `main` push | Build base (upstream @ pinned tag) + overlay → smoke test → push `edge-<sha>` (no `latest`). |
+| our `v*` tag | Build + smoke test → push the version tag (e.g. `v1.2.3`) + `latest`. |
+| upstream tag | `watch-upstream.yml` detects it and dispatches a build → push the exact tag (e.g. `v0.24.0`) + `latest`. |
 | manual | Same as `main`, or pass `upstream_tag` input to force a specific upstream version. |
 
 `.github/workflows/watch-upstream.yml` runs on a schedule (default every 6 h)
-and **watches NVIDIA-NeMo/Guardrails for new releases**. GitHub cannot see
-another repo's release events directly, so it polls the GitHub API for the
-latest upstream release, checks whether an image tag `upstream-<version>`
-already exists in GHCR, and dispatches `build.yml` only when a new upstream
-version appears. The `upstream-<version>` tag makes repeated runs idempotent.
+and **watches NVIDIA-NeMo/Guardrails STABLE git tags** (`vX.Y.Z`, e.g.
+`v0.23.0`; `-rc*`/pre-release tags are ignored). GitHub cannot see another
+repo's tag/release events directly, so it lists upstream tags via the GitHub
+API, checks whether an image tag with the exact version (e.g. `:v0.23.0`)
+already exists in GHCR, and dispatches `build.yml` only when a new stable tag
+appears. Re-dispatches of the same tag are no-ops because the image tag
+already exists.
+
+**`:latest` always points at the newest stable tag** that we have built (an
+upstream `vX.Y.Z` tag or our own `v*` tag) — never at an `edge-<sha>` build.
 
 > Requires the `UPSTREAM_RELEASES_TOKEN` secret: a GitHub PAT with access to
 > the public `NVIDIA-NeMo/Guardrails` repo, so the scheduled job isn't
