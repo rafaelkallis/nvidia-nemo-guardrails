@@ -7,11 +7,12 @@ Guardrails server to run its self-check rails against:
 * POST /v1/chat/completions             -> canned completions
 
 Response logic:
-  * If the request contains "self check input" or "self check output" task
-    prompts and the user/bot content contains a known jailbreak marker
-    (JAILBREAK_MARKER), return "Yes" so the guardrail blocks.
-  * Otherwise return "No" for self-check requests (always allowed).
-  * For main model requests return a canned benign completion.
+  * Self-check requests (detected by looking for the self-check prompt
+    templates in the message text) answer the question on their own line:
+      - "Yes" if the user/bot content contains the JAILBREAK_MARKER (blocked)
+      - "No"  otherwise (allowed)
+  * Genuine main-model requests get a canned benign completion whose text
+    intentionally does NOT look like a Yes/No self-check answer.
 
 Usage:  uvicorn mock_openai_server:app --host 0.0.0.0 --port 8000
 """
@@ -28,7 +29,10 @@ app = FastAPI(title="mock-openai")
 # mock reports the content as blocked.
 JAILBREAK_MARKER = os.getenv("JAILBREAK_MARKER", "IGNORE_ALL_RULES_VLLM_GUARD")
 
-CANNED_RESPONSE = os.getenv("CANNED_RESPONSE", "This is a benign canned response from the mock LLM.")
+CANNED_RESPONSE = os.getenv(
+    "CANNED_RESPONSE",
+    "This is a benign canned response from the mock LLM describing the company policy.",
+)
 
 
 @app.get("/v1/models")
@@ -36,30 +40,46 @@ async def list_models() -> dict[str, Any]:
     return {"object": "list", "data": [{"id": "mock-model", "object": "model", "owned_by": "mock"}]}
 
 
-async def _extract_prompts(body: dict) -> tuple[str, str]:
-    """Return (joined_messages_text, last_user_or_bot_text)."""
+async def _extract_prompts(body: dict) -> str:
+    """Return the full text of all messages (lowercased)."""
     messages = body.get("messages", [])
     parts: list[str] = []
     for m in messages:
         content = m.get("content", "")
         if isinstance(content, list):
-            content = " ".join(str(c.get("text", "")) for c in content if isinstance(c, dict))
+            content = " ".join(
+                str(c.get("text", "")) for c in content if isinstance(c, dict)
+            )
         parts.append(str(content))
-    return "\n".join(parts).lower(), (parts[-1] if parts else "").lower()
+    return "\n".join(parts).lower()
+
+
+def _is_self_check(text: str) -> bool:
+    """Detect a NeMo self-check prompt by its template text."""
+    signatures = (
+        "should the user message be blocked",
+        "should the message be blocked",
+        "companion policy for the bot",
+    )
+    return any(sig in text for sig in signatures)
 
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request) -> JSONResponse:
     body = await request.json()
-    full_text, last_text = await _extract_prompts(body)
+    text = await _extract_prompts(body)
 
-    is_self_check = "self check input" in full_text or "self check output" in full_text
+    is_self_check = _is_self_check(text)
+    marker_present = JAILBREAK_MARKER.lower() in text
 
-    if is_self_check and JAILBREAK_MARKER.lower() in full_text:
-        answer = "Yes"
-    elif is_self_check:
-        answer = "No"
+    if is_self_check:
+        # Answer the self-check question on its own line: Yes = block,
+        # No = allow. NeMo's "is_content_safe" parser treats a plain
+        # Yes/No line as the verdict.
+        answer = "Yes" if marker_present else "No"
     else:
+        # A genuine main-model completion. Avoid any wording that the
+        # is_content_safe parser could mistake for a Yes/No verdict.
         answer = CANNED_RESPONSE
 
     return JSONResponse(
