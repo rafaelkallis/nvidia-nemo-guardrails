@@ -16,9 +16,9 @@ def init(app) -> None:
     """Called by the Guardrails server during startup.
 
     Args:
-        app: The FastAPI `GuardrailsApp` instance. It exposes
-            `set_default_config_id()` on the `nemoguardrails.server` module.
+        app: The FastAPI `GuardrailsApp` instance. `set_default_config_id`
+            is exposed on the `nemoguardrails.server.api` module.
     """
-    from nemoguardrails.server import set_default_config_id
+    from nemoguardrails.server.api import set_default_config_id
 
     set_default_config_id(DEFAULT_CONFIG_ID)
