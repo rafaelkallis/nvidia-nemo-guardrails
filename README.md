@@ -48,7 +48,9 @@ and shipped as a self-built Docker image via GitHub Actions to GHCR.
 ├── Dockerfile.overlay             # overlay image FROM the upstream NeMo base image
 ├── docker-compose.yml             # local stack (guardrails + optional vLLM profile)
 ├── scripts/build-local.sh         # build base (upstream) + overlay locally
-├── ci/mock_openai_server.py       # OpenAI-compatible mock for CI smoke tests
+├── ci/
+│   ├── mock_openai_server.py       # OpenAI-compatible mock for CI smoke tests
+│   └── smoke_test.py               # stdlib Python end-to-end smoke tests
 └── .github/workflows/
     ├── build.yml                  # CI/CD: build + smoke test + GHCR release
     └── watch-upstream.yml         # watches upstream releases, triggers rebuilds
