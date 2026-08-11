@@ -56,6 +56,54 @@ and shipped as a self-built Docker image via GitHub Actions to GHCR.
     └── watch-upstream.yml         # watches upstream releases, triggers rebuilds
 ```
 
+Also track a Python project for local development (devcontainer tooling, lint
+and unit tests). It does **not** ship in the Docker image and is **not** needed
+for the CI smoke test (which stays stdlib-only):
+
+```
+├── pyproject.toml                # project metadata, dev deps (pytest/ruff), tool config
+├── uv.lock                       # deterministic lockfile (uv sync --dev)
+├── src/nvidia_nemo_guardrails/   # tiny metadata/config-layout helpers
+├── tests/                        # unit tests (pytest)
+└── scripts/validate.py           # stdlib dev-time checks (config drift)
+```
+
+---
+
+## Local development
+
+Open the repo in VS Code and accept **"Reopen in Container"**:
+
+- Devcontainer: `mcr.microsoft.com/devcontainers/python:3.12` plus the `uv`
+  feature and `docker-in-docker`.
+- `postCreateCommand` runs `uv sync --dev`, which creates `.venv/` from
+  `pyproject.toml` + `uv.lock`. The configured interpreter is
+  `${workspaceFolder}/.venv/bin/python`.
+- Inside the container, run the mock and the unit tests normally.
+
+Common commands (from the repo root):
+
+```bash
+uv sync --dev                      # create .venv + install dev deps (pytest, ruff, …)
+.venv/bin/pytest -q                # unit tests (tests/) — independent of Docker/CI
+uvx ruff check .                   # lint all Python in the repo
+.venv/bin/python scripts/validate.py --check consistency   # config.py vs config/ drift
+```
+
+> **Note:** the workspace folder name contains a `:` (that's how it's cloned).
+> `uv sync` is fine, but `uv run <cmd>` dies with `path segment contains
+> separator ':'` because uv prepends `.venv/bin` to `PATH` — and `PATH` is
+> colon-delimited, so the literal `:` cannot be escaped (see astral-sh/uv#8983).
+> Use the direct `.venv/bin/...` paths above (they work).
+> If you clone into a colon-free folder name, plain `uv run pytest` works too.
+
+The `mock` extra (`fastapi`, `uvicorn`) is folded into the `dev` group too, so
+`uv sync --dev` gives you everything needed to run the mock locally:
+
+```bash
+.venv/bin/uvicorn mock_openai_server:app --app-dir ci --host 0.0.0.0 --port 8000
+```
+
 ---
 
 ## Getting started
